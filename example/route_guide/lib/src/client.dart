@@ -22,11 +22,10 @@ import 'generated/route_guide.pb.dart';
 import 'generated/route_guide.pbgrpc.dart';
 
 class Client {
-  ClientChannel channel;
   RouteGuideClient stub;
 
   Future<void> main(List<String> args) async {
-    channel = ClientChannel('127.0.0.1',
+    final channel = ClientChannel('127.0.0.1',
         port: 8080,
         options:
             const ChannelOptions(credentials: ChannelCredentials.insecure()));
@@ -95,7 +94,7 @@ class Client {
     Stream<Point> generateRoute(int count) async* {
       final random = Random();
 
-      for (int i = 0; i < count; i++) {
+      for (var i = 0; i < count; i++) {
         final point = featuresDb[random.nextInt(featuresDb.length)].location;
         print(
             'Visiting point ${point.latitude / coordFactor}, ${point.longitude / coordFactor}');

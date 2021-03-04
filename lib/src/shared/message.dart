@@ -16,7 +16,9 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
+import 'codec.dart';
+import 'codec_registry.dart';
+import 'status.dart';
 
 abstract class GrpcMessage {}
 
@@ -31,50 +33,67 @@ class GrpcMetadata extends GrpcMessage {
 class GrpcData extends GrpcMessage {
   final List<int> data;
   final bool isCompressed;
-  GrpcData(this.data, {this.isCompressed}) : assert(data != null);
+  GrpcData(this.data, {required this.isCompressed}) {
+    ArgumentError.checkNotNull(data);
+  }
 
   @override
   String toString() => 'gRPC Data (${data.length} bytes)';
 }
 
 class GrpcMessageSink extends Sink<GrpcMessage> {
-  GrpcMessage message;
+  late final GrpcMessage message;
+  bool _messageReceived = false;
 
   @override
   void add(GrpcMessage data) {
-    if (message != null) {
+    if (_messageReceived) {
       throw StateError('Too many messages received!');
     }
     message = data;
+    _messageReceived = true;
   }
 
   @override
   void close() {
-    if (message == null) {
+    if (!_messageReceived) {
       throw StateError('No messages received!');
     }
   }
 }
 
-List<int> frame(List<int> payload) {
-  final payloadLength = payload.length;
+List<int> frame(List<int> rawPayload, [Codec? codec]) {
+  final compressedPayload =
+      codec == null ? rawPayload : codec.compress(rawPayload);
+  final payloadLength = compressedPayload.length;
   final bytes = Uint8List(payloadLength + 5);
   final header = bytes.buffer.asByteData(0, 5);
-  header.setUint8(0, 0); // TODO(dart-lang/grpc-dart#6): Handle compression
+  header.setUint8(0, codec == null ? 0 : 1);
   header.setUint32(1, payloadLength);
-  bytes.setRange(5, bytes.length, payload);
+  bytes.setRange(5, bytes.length, compressedPayload);
   return bytes;
 }
 
-StreamTransformer<GrpcMessage, GrpcMessage> grpcDecompressor() =>
-    StreamTransformer<GrpcMessage, GrpcMessage>.fromHandlers(
-        handleData: (GrpcMessage value, EventSink<GrpcMessage> sink) {
-      if (value is GrpcData) {
-        if (value.isCompressed) {
-          final decompressedData = GZipDecoder().decodeBytes(value.data);
-          sink.add(GrpcData(decompressedData, isCompressed: false));
-          return;
-        }
+StreamTransformer<GrpcMessage, GrpcMessage> grpcDecompressor({
+  CodecRegistry? codecRegistry,
+}) {
+  Codec? codec;
+  return StreamTransformer<GrpcMessage, GrpcMessage>.fromHandlers(
+      handleData: (GrpcMessage value, EventSink<GrpcMessage> sink) {
+    if (value is GrpcData && value.isCompressed) {
+      if (codec == null) {
+        sink.addError(
+          GrpcError.unimplemented('Compression mechanism not supported'),
+        );
+        return;
       }
-      sink.add(value);
-    });
+      sink.add(GrpcData(codec!.decompress(value.data), isCompressed: false));
+      return;
+    }
+
+    if (value is GrpcMetadata && value.metadata.containsKey('grpc-encoding')) {
+      codec = codecRegistry?.lookup(value.metadata['grpc-encoding']!);
+    }
+    sink.add(value);
+  });
+}

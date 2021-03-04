@@ -15,8 +15,8 @@
 
 import 'dart:convert';
 
-import 'package:grpc/src/shared/streams.dart';
 import 'package:grpc/src/shared/message.dart';
+import 'package:grpc/src/shared/streams.dart';
 import 'package:http2/transport.dart';
 import 'package:test/test.dart';
 
@@ -27,14 +27,13 @@ List<int> mockEncode(int value) => List.filled(value, 0);
 int mockDecode(List<int> value) => value.length;
 
 Map<String, String> headersToMap(List<Header> headers) =>
-    Map.fromIterable(headers,
-        key: (h) => ascii.decode(h.name), value: (h) => ascii.decode(h.value));
+    {for (var h in headers) ascii.decode(h.name): ascii.decode(h.value)};
 
 void validateRequestHeaders(Map<String, String> headers,
-    {String path,
+    {String? path,
     String authority = 'test',
-    String timeout,
-    Map<String, String> customHeaders}) {
+    String? timeout,
+    Map<String, String>? customHeaders}) {
   expect(headers[':method'], 'POST');
   expect(headers[':scheme'], 'https');
   if (path != null) {
@@ -44,7 +43,6 @@ void validateRequestHeaders(Map<String, String> headers,
   expect(headers['grpc-timeout'], timeout);
   expect(headers['content-type'], 'application/grpc');
   expect(headers['te'], 'trailers');
-  expect(headers['grpc-accept-encoding'], 'identity');
   expect(headers['user-agent'], startsWith('dart-grpc/'));
 
   customHeaders?.forEach((key, value) {
@@ -55,7 +53,7 @@ void validateRequestHeaders(Map<String, String> headers,
 void validateResponseHeaders(Map<String, String> headers,
     {int status = 200,
     bool allowTrailers = false,
-    Map<String, String> customHeaders}) {
+    Map<String, String>? customHeaders}) {
   expect(headers[':status'], '200');
   expect(headers['content-type'], startsWith('application/grpc'));
   if (!allowTrailers) {
@@ -68,7 +66,7 @@ void validateResponseHeaders(Map<String, String> headers,
 }
 
 void validateResponseTrailers(Map<String, String> trailers,
-    {int status = 0, String message, Map<String, String> customTrailers}) {
+    {int status = 0, String? message, Map<String, String>? customTrailers}) {
   expect(trailers['grpc-status'], '$status');
   if (message != null) {
     expect(trailers['grpc-message'], message);
@@ -85,7 +83,7 @@ GrpcMetadata validateMetadataMessage(StreamMessage message,
 
   final decoded = GrpcHttpDecoder().convert(message);
   expect(decoded, TypeMatcher<GrpcMetadata>());
-  return decoded;
+  return decoded as GrpcMetadata;
 }
 
 GrpcData validateDataMessage(StreamMessage message, {bool endStream = false}) {
@@ -94,7 +92,7 @@ GrpcData validateDataMessage(StreamMessage message, {bool endStream = false}) {
 
   final decoded = GrpcHttpDecoder().convert(message);
   expect(decoded, TypeMatcher<GrpcData>());
-  return decoded;
+  return decoded as GrpcData;
 }
 
 void Function(StreamMessage message) headerValidator() {

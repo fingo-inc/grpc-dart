@@ -1,17 +1,20 @@
 name: interop
 description: Dart gRPC interoperability test suite.
-homepage: https://github.com/dart-lang/grpc-dart
+publish_to: none
 
 environment:
-  sdk: '>=2.2.0 <3.0.0'
+  sdk: '>=2.12.0-0 <3.0.0'
 
 dependencies:
-  args: ^1.5.2
+  args: ^2.0.0-nullsafety
   async: ^2.2.0
   collection: ^1.14.11
   grpc:
     path: ../
-  protobuf: ^0.13.12
+  protobuf: ^2.0.0-nullsafety
 
 dev_dependencies:
-  test: ^1.6.4
+  test: ^1.16.0-nullsafety.17
+
+dependency_overrides:
+  args: ^2.0.0-nullsafety

@@ -13,8 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import 'dart:async';
-
 import 'call.dart';
 
 import 'transport/transport.dart';
@@ -44,8 +42,9 @@ abstract class ClientConnection {
   void dispatchCall(ClientCall call);
 
   /// Start a request for [path] with [metadata].
-  GrpcTransportStream makeRequest(String path, Duration timeout,
-      Map<String, String> metadata, ErrorHandler onRequestFailure);
+  GrpcTransportStream makeRequest(String path, Duration? timeout,
+      Map<String, String> metadata, ErrorHandler onRequestFailure,
+      {required CallOptions callOptions});
 
   /// Shuts down this connection.
   ///

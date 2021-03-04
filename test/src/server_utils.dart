@@ -15,12 +15,11 @@
 
 import 'dart:async';
 
+import 'package:grpc/grpc.dart';
 import 'package:grpc/src/client/http2_connection.dart';
 import 'package:grpc/src/shared/message.dart';
 import 'package:http2/transport.dart';
 import 'package:test/test.dart';
-
-import 'package:grpc/grpc.dart';
 
 import 'utils.dart';
 
@@ -28,12 +27,12 @@ class TestService extends Service {
   @override
   String get $name => 'Test';
 
-  Future<int> Function(ServiceCall call, Future<int> request) unaryHandler;
-  Future<int> Function(ServiceCall call, Stream<int> request)
+  Future<int> Function(ServiceCall call, Future<int> request)? unaryHandler;
+  Future<int> Function(ServiceCall call, Stream<int> request)?
       clientStreamingHandler;
-  Stream<int> Function(ServiceCall call, Future<int> request)
+  Stream<int> Function(ServiceCall call, Future<int> request)?
       serverStreamingHandler;
-  Stream<int> Function(ServiceCall call, Stream<int> request)
+  Stream<int> Function(ServiceCall call, Stream<int> request)?
       bidirectionalHandler;
 
   TestService() {
@@ -54,45 +53,47 @@ class TestService extends Service {
     if (unaryHandler == null) {
       fail('Should not invoke Unary');
     }
-    return unaryHandler(call, request);
+    return unaryHandler!(call, request);
   }
 
   Future<int> _clientStreaming(ServiceCall call, Stream<int> request) {
     if (clientStreamingHandler == null) {
       fail('Should not invoke ClientStreaming');
     }
-    return clientStreamingHandler(call, request);
+    return clientStreamingHandler!(call, request);
   }
 
   Stream<int> _serverStreaming(ServiceCall call, Future<int> request) {
     if (serverStreamingHandler == null) {
       fail('Should not invoke ServerStreaming');
     }
-    return serverStreamingHandler(call, request);
+    return serverStreamingHandler!(call, request);
   }
 
   Stream<int> _bidirectional(ServiceCall call, Stream<int> request) {
     if (bidirectionalHandler == null) {
       fail('Should not invoke Bidirectional');
     }
-    return bidirectionalHandler(call, request);
+    return bidirectionalHandler!(call, request);
   }
 }
 
 class TestInterceptor {
-  Interceptor handler;
+  Interceptor? handler;
 
-  FutureOr<GrpcError> call(ServiceCall call, ServiceMethod method) {
+  FutureOr<GrpcError?> call(ServiceCall call, ServiceMethod method) {
     if (handler == null) {
       return null;
     }
 
-    return handler(call, method);
+    return handler!(call, method);
   }
 }
 
 class TestServerStream extends ServerTransportStream {
+  @override
   final Stream<StreamMessage> incomingMessages;
+  @override
   final StreamSink<StreamMessage> outgoingMessages;
 
   TestServerStream(this.incomingMessages, this.outgoingMessages);
@@ -107,32 +108,50 @@ class TestServerStream extends ServerTransportStream {
   }
 
   @override
-  set onTerminated(void value(int x)) {}
+  set onTerminated(void Function(int x) value) {}
 
   @override
   bool get canPush => true;
 
   @override
-  ServerTransportStream push(List<Header> requestHeaders) => null;
+  ServerTransportStream push(List<Header> requestHeaders) =>
+      throw 'unimplemented';
 }
 
-class ServerHarness {
-  final toServer = StreamController<StreamMessage>();
-  final fromServer = StreamController<StreamMessage>();
-  final service = TestService();
-  final interceptor = TestInterceptor();
-
-  Server server;
-
-  ServerHarness() {
-    server = Server(<Service>[service], <Interceptor>[interceptor]);
-  }
+class ServerHarness extends _Harness {
+  @override
+  ConnectionServer createServer() =>
+      Server(<Service>[service], <Interceptor>[interceptor]);
 
   static ServiceMethod<int, int> createMethod(String name,
       Function methodHandler, bool clientStreaming, bool serverStreaming) {
     return ServiceMethod<int, int>(name, methodHandler, clientStreaming,
         serverStreaming, mockDecode, mockEncode);
   }
+}
+
+class ConnectionServerHarness extends _Harness {
+  @override
+  ConnectionServer createServer() =>
+      ConnectionServer(<Service>[service], <Interceptor>[interceptor]);
+
+  static ServiceMethod<int, int> createMethod(String name,
+      Function methodHandler, bool clientStreaming, bool serverStreaming) {
+    return ServiceMethod<int, int>(name, methodHandler, clientStreaming,
+        serverStreaming, mockDecode, mockEncode);
+  }
+}
+
+abstract class _Harness {
+  final toServer = StreamController<StreamMessage>();
+  final fromServer = StreamController<StreamMessage>();
+  final service = TestService();
+  final interceptor = TestInterceptor();
+  ConnectionServer? _server;
+
+  ConnectionServer createServer();
+
+  ConnectionServer get server => _server ??= createServer();
 
   void setUp() {
     final stream = TestServerStream(toServer.stream, fromServer.sink);
@@ -145,14 +164,14 @@ class ServerHarness {
   }
 
   void setupTest(List<MessageHandler> handlers) {
-    int handlerIndex = 0;
+    var handlerIndex = 0;
     void handleMessages(StreamMessage message) {
       handlers[handlerIndex++](message);
     }
 
     fromServer.stream.listen(
         expectAsync1(handleMessages, count: handlers.length),
-        onError: expectAsync1((_) {}, count: 0),
+        onError: expectAsync1((dynamic _) {}, count: 0),
         onDone: expectAsync0(() {}, count: 1));
   }
 
@@ -169,10 +188,10 @@ class ServerHarness {
 
   void sendRequestHeader(String path,
       {String authority = 'test',
-      Map<String, String> metadata,
-      Duration timeout}) {
+      Map<String, String>? metadata,
+      Duration? timeout}) {
     final headers = Http2ClientConnection.createCallHeaders(
-        true, authority, path, timeout, metadata,
+        true, authority, path, timeout, metadata, null,
         userAgent: 'dart-grpc/1.0.0 test');
     toServer.add(HeadersStreamMessage(headers));
   }
@@ -187,7 +206,7 @@ class ServerHarness {
       validateResponseHeaders(header.metadata);
     }
 
-    int responseIndex = 0;
+    var responseIndex = 0;
     void handleResponse(StreamMessage message) {
       final response = validateDataMessage(message);
       expect(mockDecode(response.data), expectedResponses[responseIndex++]);

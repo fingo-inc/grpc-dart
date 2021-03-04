@@ -7,6 +7,7 @@ import 'package:grpc/src/client/connection.dart';
 import 'package:grpc/src/client/http2_connection.dart';
 import 'package:http2/http2.dart';
 import 'package:test/test.dart';
+import 'common.dart';
 
 class TestClient extends grpc.Client {
   static final _$stream = grpc.ClientMethod<int, int>(
@@ -15,14 +16,14 @@ class TestClient extends grpc.Client {
       (List<int> value) => value[0]);
 
   TestClient(ClientChannel channel) : super(channel);
-  grpc.ResponseStream<int> stream(int request, {grpc.CallOptions options}) {
-    final call =
-        $createCall(_$stream, Stream.fromIterable([request]), options: options);
-    return grpc.ResponseStream(call);
+  grpc.ResponseStream<int> stream(int request, {grpc.CallOptions? options}) {
+    return $createStreamingCall(_$stream, Stream.value(request),
+        options: options);
   }
 }
 
 class TestService extends grpc.Service {
+  @override
   String get $name => 'test.TestService';
 
   TestService() {
@@ -47,14 +48,16 @@ class FixedConnectionClientChannel extends ClientChannelBase {
   ClientConnection createConnection() => clientConnection;
 }
 
-main() async {
-  test('client reconnects after the connection gets old', () async {
-    final grpc.Server server = grpc.Server([TestService()]);
-    await server.serve(address: 'localhost', port: 0);
+Future<void> main() async {
+  testTcpAndUds('client reconnects after the connection gets old',
+      (address) async {
+    // client reconnect after a short delay.
+    final server = grpc.Server([TestService()]);
+    await server.serve(address: address, port: 0);
 
     final channel = FixedConnectionClientChannel(Http2ClientConnection(
-      'localhost',
-      server.port,
+      address,
+      server.port!,
       grpc.ChannelOptions(
         idleTimeout: Duration(minutes: 1),
         // Short delay to test that it will time out.
@@ -62,8 +65,8 @@ main() async {
         credentials: grpc.ChannelCredentials.insecure(),
       ),
     ));
-    final testClient = TestClient(channel);
 
+    final testClient = TestClient(channel);
     expect(await testClient.stream(1).toList(), [1, 2, 3]);
     await Future.delayed(Duration(milliseconds: 200));
     expect(await testClient.stream(1).toList(), [1, 2, 3]);
@@ -72,16 +75,17 @@ main() async {
     server.shutdown();
   });
 
-  test('client reconnects when stream limit is used', () async {
-    final grpc.Server server = grpc.Server([TestService()]);
+  testTcpAndUds('client reconnects when stream limit is used', (address) async {
+    // client reconnect after setting stream limit.
+    final server = grpc.Server([TestService()]);
     await server.serve(
-        address: 'localhost',
+        address: address,
         port: 0,
         http2ServerSettings: ServerSettings(concurrentStreamLimit: 2));
 
     final channel = FixedConnectionClientChannel(Http2ClientConnection(
-        'localhost',
-        server.port,
+        address,
+        server.port!,
         grpc.ChannelOptions(credentials: grpc.ChannelCredentials.insecure())));
     final states = <grpc.ConnectionState>[];
     channel.clientConnection.onStateChanged =

@@ -21,7 +21,8 @@ import '../../shared/security.dart';
 /// returns `true`, the bad certificate is allowed, and the TLS handshake can
 /// continue. If the handler returns `false`, the TLS handshake fails, and the
 /// connection is aborted.
-typedef bool BadCertificateHandler(X509Certificate certificate, String host);
+typedef BadCertificateHandler = bool Function(
+    X509Certificate certificate, String host);
 
 /// Bad certificate handler that disables all certificate checks.
 /// DO NOT USE IN PRODUCTION!
@@ -32,35 +33,35 @@ bool allowBadCertificates(X509Certificate certificate, String host) => true;
 /// Options controlling TLS security settings on a [ClientChannel].
 class ChannelCredentials {
   final bool isSecure;
-  final String authority;
-  final List<int> _certificateBytes;
-  final String _certificatePassword;
-  final BadCertificateHandler onBadCertificate;
+  final String? authority;
+  final List<int>? _certificateBytes;
+  final String? _certificatePassword;
+  final BadCertificateHandler? onBadCertificate;
 
   const ChannelCredentials._(this.isSecure, this._certificateBytes,
       this._certificatePassword, this.authority, this.onBadCertificate);
 
   /// Disable TLS. RPCs are sent in clear text.
-  const ChannelCredentials.insecure({String authority})
+  const ChannelCredentials.insecure({String? authority})
       : this._(false, null, null, authority, null);
 
   /// Enable TLS and optionally specify the [certificates] to trust. If
   /// [certificates] is not provided, the default trust store is used.
   const ChannelCredentials.secure(
-      {List<int> certificates,
-      String password,
-      String authority,
-      BadCertificateHandler onBadCertificate})
+      {List<int>? certificates,
+      String? password,
+      String? authority,
+      BadCertificateHandler? onBadCertificate})
       : this._(true, certificates, password, authority, onBadCertificate);
 
-  SecurityContext get securityContext {
+  SecurityContext? get securityContext {
     if (!isSecure) return null;
     if (_certificateBytes != null) {
       return createSecurityContext(false)
-        ..setTrustedCertificatesBytes(_certificateBytes,
+        ..setTrustedCertificatesBytes(_certificateBytes!,
             password: _certificatePassword);
     }
-    final context = new SecurityContext(withTrustedRoots: true);
+    final context = SecurityContext(withTrustedRoots: true);
     context.setAlpnProtocols(supportedAlpnProtocols, false);
     return context;
   }

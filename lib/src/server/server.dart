@@ -19,17 +19,37 @@ import 'dart:io';
 import 'package:http2/transport.dart';
 import 'package:meta/meta.dart';
 
+import '../shared/codec_registry.dart';
 import '../shared/security.dart';
-
 import 'handler.dart';
 import 'interceptor.dart';
 import 'service.dart';
 
-class ServerTlsCredentials {
-  final List<int> certificate;
-  final String certificatePassword;
-  final List<int> privateKey;
-  final String privateKeyPassword;
+/// Wrapper around grpc_server_credentials, a way to authenticate a server.
+abstract class ServerCredentials {
+  /// Validates incoming connection. Returns [true] if connection is
+  /// allowed to proceed.
+  bool validateClient(Socket socket) => true;
+
+  /// Creates [SecurityContext] from these credentials if possible.
+  /// Otherwise returns [null].
+  SecurityContext? get securityContext;
+}
+
+/// Set of credentials that only allows local TCP connections.
+class ServerLocalCredentials extends ServerCredentials {
+  @override
+  bool validateClient(Socket socket) => socket.remoteAddress.isLoopback;
+
+  @override
+  SecurityContext? get securityContext => null;
+}
+
+class ServerTlsCredentials extends ServerCredentials {
+  final List<int>? certificate;
+  final String? certificatePassword;
+  final List<int>? privateKey;
+  final String? privateKeyPassword;
 
   /// TLS credentials for a [Server].
   ///
@@ -41,100 +61,150 @@ class ServerTlsCredentials {
       this.privateKey,
       this.privateKeyPassword});
 
+  @override
   SecurityContext get securityContext {
     final context = createSecurityContext(true);
     if (privateKey != null) {
-      context.usePrivateKeyBytes(privateKey, password: privateKeyPassword);
+      context.usePrivateKeyBytes(privateKey!, password: privateKeyPassword);
     }
     if (certificate != null) {
-      context.useCertificateChainBytes(certificate,
+      context.useCertificateChainBytes(certificate!,
           password: certificatePassword);
     }
     return context;
+  }
+
+  @override
+  bool validateClient(Socket socket) => true;
+}
+
+/// A gRPC server that serves via provided [ServerTransportConnection]s.
+///
+/// Unlike [Server], the caller has the responsibility of configuring and
+/// managing the connection from a client.
+class ConnectionServer {
+  final Map<String, Service> _services = {};
+  final List<Interceptor> _interceptors;
+  final CodecRegistry? _codecRegistry;
+
+  final _connections = <ServerTransportConnection>[];
+
+  /// Create a server for the given [services].
+  ConnectionServer(
+    List<Service> services, [
+    List<Interceptor> interceptors = const <Interceptor>[],
+    CodecRegistry? codecRegistry,
+  ])  : _codecRegistry = codecRegistry,
+        _interceptors = interceptors {
+    for (final service in services) {
+      _services[service.$name] = service;
+    }
+  }
+
+  Service? lookupService(String service) => _services[service];
+
+  Future<void> serveConnection(ServerTransportConnection connection) async {
+    _connections.add(connection);
+    ServerHandler_? handler;
+    // TODO(jakobr): Set active state handlers, close connection after idle
+    // timeout.
+    connection.incomingStreams.listen((stream) {
+      handler = serveStream_(stream);
+    }, onError: (error, stackTrace) {
+      if (error is Error) {
+        Zone.current.handleUncaughtError(error, stackTrace);
+      }
+    }, onDone: () {
+      // TODO(sigurdm): This is not correct behavior in the presence of
+      // half-closed tcp streams.
+      // Half-closed  streams seems to not be fully supported by package:http2.
+      // https://github.com/dart-lang/http2/issues/42
+      handler?.cancel();
+      _connections.remove(connection);
+    });
+  }
+
+  @visibleForTesting
+  ServerHandler_ serveStream_(ServerTransportStream stream) {
+    return ServerHandler_(lookupService, stream, _interceptors, _codecRegistry)
+      ..handle();
   }
 }
 
 /// A gRPC server.
 ///
 /// Listens for incoming RPCs, dispatching them to the right [Service] handler.
-class Server {
-  final Map<String, Service> _services = {};
-  final List<Interceptor> _interceptors;
-
-  ServerSocket _insecureServer;
-  SecureServerSocket _secureServer;
-  final _connections = <ServerTransportConnection>[];
+class Server extends ConnectionServer {
+  ServerSocket? _insecureServer;
+  SecureServerSocket? _secureServer;
 
   /// Create a server for the given [services].
-  Server(List<Service> services,
-      [List<Interceptor> interceptors = const <Interceptor>[]])
-      : _interceptors = interceptors {
-    for (final service in services) {
-      _services[service.$name] = service;
-    }
-  }
+  Server(
+    List<Service> services, [
+    List<Interceptor> interceptors = const <Interceptor>[],
+    CodecRegistry? codecRegistry,
+  ]) : super(services, interceptors, codecRegistry);
 
   /// The port that the server is listening on, or `null` if the server is not
   /// active.
-  int get port {
-    if (_secureServer != null) return _secureServer.port;
-    if (_insecureServer != null) return _insecureServer.port;
+  int? get port {
+    if (_secureServer != null) return _secureServer!.port;
+    if (_insecureServer != null) return _insecureServer!.port;
     return null;
   }
 
-  Service lookupService(String service) => _services[service];
+  @override
+  Service? lookupService(String service) => _services[service];
 
+  /// Starts the [Server] with the given options.
+  /// [address] can be either a [String] or an [InternetAddress], in the latter
+  /// case it can be a Unix Domain Socket address.
   Future<void> serve(
       {dynamic address,
-      int port,
-      ServerTlsCredentials security,
-      ServerSettings http2ServerSettings,
-      int backlog: 0,
-      bool v6Only: false,
-      bool shared: false}) async {
+      int? port,
+      ServerCredentials? security,
+      ServerSettings? http2ServerSettings,
+      int backlog = 0,
+      bool v6Only = false,
+      bool shared = false}) async {
     // TODO(dart-lang/grpc-dart#9): Handle HTTP/1.1 upgrade to h2c, if allowed.
-    Stream<Socket> server;
-    if (security != null) {
+    Stream<Socket>? server;
+    final securityContext = security?.securityContext;
+    if (securityContext != null) {
       _secureServer = await SecureServerSocket.bind(
-          address ?? InternetAddress.anyIPv4,
-          port ?? 443,
-          security.securityContext,
-          backlog: backlog,
-          shared: shared,
-          v6Only: v6Only);
+          address ?? InternetAddress.anyIPv4, port ?? 443, securityContext,
+          backlog: backlog, shared: shared, v6Only: v6Only);
       server = _secureServer;
     } else {
       _insecureServer = await ServerSocket.bind(
-          address ?? InternetAddress.anyIPv4, port ?? 80, backlog: backlog, shared: shared , v6Only: v6Only);
+        address ?? InternetAddress.anyIPv4,
+        port ?? 80,
+        backlog: backlog,
+        shared: shared,
+        v6Only: v6Only,
+      );
       server = _insecureServer;
     }
-    server.listen((socket) {
+    server!.listen((socket) {
+      // Don't wait for io buffers to fill up before sending requests.
+      if (socket.address.type != InternetAddressType.unix) {
+        socket.setOption(SocketOption.tcpNoDelay, true);
+      }
       final connection = ServerTransportConnection.viaSocket(socket,
           settings: http2ServerSettings);
-      _connections.add(connection);
-      ServerHandler_ handler;
-      // TODO(jakobr): Set active state handlers, close connection after idle
-      // timeout.
-      connection.incomingStreams.listen((stream) {
-        handler = serveStream_(stream);
-      }, onError: (error) {
-        print('Connection error: $error');
-      }, onDone: () {
-        // TODO(sigurdm): This is not correct behavior in the presence of
-        // half-closed tcp streams.
-        // Half-closed  streams seems to not be fully supported by package:http2.
-        // https://github.com/dart-lang/http2/issues/42
-        handler?.cancel();
-        _connections.remove(connection);
-      });
-    }, onError: (error) {
-      print('Socket error: $error');
+      serveConnection(connection);
+    }, onError: (error, stackTrace) {
+      if (error is Error) {
+        Zone.current.handleUncaughtError(error, stackTrace);
+      }
     });
   }
 
+  @override
   @visibleForTesting
   ServerHandler_ serveStream_(ServerTransportStream stream) {
-    return ServerHandler_(lookupService, stream, _interceptors)..handle();
+    return ServerHandler_(lookupService, stream, _interceptors, _codecRegistry)
+      ..handle();
   }
 
   @Deprecated(
@@ -146,10 +216,10 @@ class Server {
   Future<void> shutdown() async {
     final done = _connections.map((connection) => connection.finish()).toList();
     if (_insecureServer != null) {
-      done.add(_insecureServer.close());
+      done.add(_insecureServer!.close());
     }
     if (_secureServer != null) {
-      done.add(_secureServer.close());
+      done.add(_secureServer!.close());
     }
     await Future.wait(done);
     _insecureServer = null;

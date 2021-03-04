@@ -18,15 +18,21 @@ export 'src/auth/auth.dart'
         BaseAuthenticator,
         HttpBasedAuthenticator,
         JwtServiceAccountAuthenticator;
-
 export 'src/auth/auth_io.dart'
-    show ComputeEngineAuthenticator, ServiceAccountAuthenticator;
-
+    show
+        applicationDefaultCredentialsAuthenticator,
+        ComputeEngineAuthenticator,
+        ServiceAccountAuthenticator;
 export 'src/client/call.dart' show CallOptions, ClientCall, MetadataProvider;
 export 'src/client/client.dart' show Client;
+export 'src/client/client_transport_connector.dart'
+    show ClientTransportConnector;
 export 'src/client/common.dart' show Response, ResponseStream, ResponseFuture;
 export 'src/client/connection.dart' show ConnectionState;
-export 'src/client/http2_channel.dart' show ClientChannel;
+export 'src/client/http2_channel.dart'
+    show ClientChannel, ClientTransportConnectorChannel;
+export 'src/client/interceptor.dart'
+    show ClientInterceptor, ClientUnaryInvoker, ClientStreamingInvoker;
 export 'src/client/method.dart' show ClientMethod;
 export 'src/client/options.dart'
     show
@@ -34,21 +40,28 @@ export 'src/client/options.dart'
         BackoffStrategy,
         defaultBackoffStrategy,
         ChannelOptions;
-
 export 'src/client/transport/http2_credentials.dart'
     show BadCertificateHandler, allowBadCertificates, ChannelCredentials;
 
+/// Status detail types
+export 'src/generated/google/rpc/error_details.pb.dart';
 export 'src/server/call.dart' show ServiceCall;
 export 'src/server/interceptor.dart' show Interceptor;
-export 'src/server/server.dart' show ServerTlsCredentials, Server;
+export 'src/server/server.dart'
+    show
+        ServerCredentials,
+        ServerLocalCredentials,
+        ServerTlsCredentials,
+        ConnectionServer,
+        Server;
 export 'src/server/service.dart' show ServiceMethod, Service;
-
+export 'src/shared/codec.dart' show Codec, IdentityCodec, GzipCodec;
+export 'src/shared/codec_registry.dart';
 export 'src/shared/message.dart'
     show GrpcMessage, GrpcMetadata, GrpcData, grpcDecompressor;
-
+export 'src/shared/profiler.dart' show isTimelineLoggingEnabled;
 export 'src/shared/security.dart'
     show supportedAlpnProtocols, createSecurityContext;
 export 'src/shared/status.dart' show StatusCode, GrpcError;
 export 'src/shared/streams.dart' show GrpcHttpEncoder, GrpcHttpDecoder;
-
 export 'src/shared/timeout.dart' show toTimeoutString, fromTimeoutString;

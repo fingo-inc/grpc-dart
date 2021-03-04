@@ -48,10 +48,10 @@ class _GrpcWebConversionSink extends ChunkedConversionSink<ByteBuffer> {
   final _dataHeader = Uint8List(4);
 
   _GrpcWebParseState _state = _GrpcWebParseState.Init;
-  int _chunkOffset;
-  int _frameType;
-  int _dataOffset = 0;
-  Uint8List _data;
+  var _chunkOffset = 0;
+  int? _frameType;
+  var _dataOffset = 0;
+  Uint8List? _data;
 
   _GrpcWebConversionSink(this._out);
 
@@ -90,16 +90,16 @@ class _GrpcWebConversionSink extends ChunkedConversionSink<ByteBuffer> {
   }
 
   void _parseMessage(List<int> chunkData) {
-    final dataRemaining = _data.lengthInBytes - _dataOffset;
+    final dataRemaining = _data!.lengthInBytes - _dataOffset;
     if (dataRemaining > 0) {
       final chunkRemaining = chunkData.length - _chunkOffset;
       final toCopy = min(dataRemaining, chunkRemaining);
-      _data.setRange(
-          _dataOffset, _dataOffset + toCopy, chunkData, _chunkOffset);
+      _data!
+          .setRange(_dataOffset, _dataOffset + toCopy, chunkData, _chunkOffset);
       _dataOffset += toCopy;
       _chunkOffset += toCopy;
     }
-    if (_dataOffset == _data.lengthInBytes) {
+    if (_dataOffset == _data!.lengthInBytes) {
       _finishMessage();
     }
   }
@@ -107,13 +107,13 @@ class _GrpcWebConversionSink extends ChunkedConversionSink<ByteBuffer> {
   void _finishMessage() {
     switch (_frameType) {
       case frameTypeData:
-        _out.add(GrpcData(_data, isCompressed: false));
+        _out.add(GrpcData(_data!, isCompressed: false));
         break;
       case frameTypeCompressedData:
         _out.add(GrpcData(_data, isCompressed: true));
         break;
       case frameTypeTrailers:
-        final stringData = String.fromCharCodes(_data);
+        final stringData = String.fromCharCodes(_data!);
         final headers = _parseHttp1Headers(stringData);
         _out.add(GrpcMetadata(headers));
         break;
@@ -125,7 +125,7 @@ class _GrpcWebConversionSink extends ChunkedConversionSink<ByteBuffer> {
 
   Map<String, String> _parseHttp1Headers(String stringData) {
     final trimmed = stringData.trim();
-    final chunks = trimmed == '' ? [] : trimmed.split('\r\n');
+    final chunks = trimmed == '' ? <String>[] : trimmed.split('\r\n');
     final headers = <String, String>{};
     for (final chunk in chunks) {
       final pos = chunk.indexOf(':');

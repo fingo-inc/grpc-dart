@@ -14,10 +14,15 @@
 // limitations under the License.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:grpc/grpc.dart';
+import 'package:grpc/src/client/call.dart';
 import 'package:grpc/src/client/http2_connection.dart';
+import 'package:grpc/src/generated/google/rpc/status.pb.dart';
+import 'package:grpc/src/shared/status.dart';
 import 'package:http2/transport.dart';
+import 'package:protobuf/protobuf.dart';
 import 'package:test/test.dart';
 
 import '../src/client_utils.dart';
@@ -26,7 +31,7 @@ import '../src/utils.dart';
 void main() {
   const dummyValue = 0;
 
-  ClientHarness harness;
+  late ClientHarness harness;
 
   setUp(() {
     harness = ClientHarness()..setUp();
@@ -53,6 +58,30 @@ void main() {
     await harness.runTest(
       clientCall: harness.client.unary(requestValue),
       expectedResult: responseValue,
+      expectedPath: '/Test/Unary',
+      serverHandlers: [handleRequest],
+    );
+  });
+
+  test('Unary call attaches encoding headers', () async {
+    const requestValue = 17;
+    const responseValue = 19;
+
+    void handleRequest(StreamMessage message) {
+      final data = validateDataMessage(message);
+      expect(mockDecode(data.data), requestValue);
+
+      harness
+        ..sendResponseHeader()
+        ..sendResponseValue(responseValue)
+        ..sendResponseTrailer();
+    }
+
+    await harness.runTest(
+      clientCall: harness.client.unary(requestValue,
+          options: CallOptions(metadata: {'grpc-accept-encoding': 'gzip'})),
+      expectedResult: responseValue,
+      expectedCustomHeaders: {'grpc-accept-encoding': 'gzip'},
       expectedPath: '/Test/Unary',
       serverHandlers: [handleRequest],
     );
@@ -257,6 +286,27 @@ void main() {
     );
   });
 
+  test('Call throws decoded message', () async {
+    const customStatusCode = 17;
+    const customStatusMessage = 'エラー';
+    const encodedCustomStatusMessage = '%E3%82%A8%E3%83%A9%E3%83%BC';
+
+    void handleRequest(_) {
+      harness.toClient.add(HeadersStreamMessage([
+        Header.ascii('grpc-status', '$customStatusCode'),
+        Header.ascii('grpc-message', encodedCustomStatusMessage)
+      ], endStream: true));
+      harness.toClient.close();
+    }
+
+    await harness.runFailureTest(
+      clientCall: harness.client.unary(dummyValue),
+      expectedException:
+          GrpcError.custom(customStatusCode, customStatusMessage),
+      serverHandlers: [handleRequest],
+    );
+  });
+
   test('Call throws on response stream errors', () async {
     void handleRequest(_) {
       harness.toClient.addError('Test error');
@@ -265,6 +315,27 @@ void main() {
     await harness.runFailureTest(
       clientCall: harness.client.unary(dummyValue),
       expectedException: GrpcError.unknown('Test error'),
+      serverHandlers: [handleRequest],
+    );
+  });
+
+  test('Call throws if unable to decode response', () async {
+    const responseValue = 19;
+
+    void handleRequest(StreamMessage message) {
+      harness
+        ..sendResponseHeader()
+        ..sendResponseValue(responseValue)
+        ..sendResponseTrailer();
+    }
+
+    harness.client = TestClient(harness.channel, decode: (bytes) {
+      throw 'error decoding';
+    });
+
+    await harness.runFailureTest(
+      clientCall: harness.client.unary(dummyValue),
+      expectedException: GrpcError.dataLoss('Error parsing response'),
       serverHandlers: [handleRequest],
     );
   });
@@ -328,8 +399,8 @@ void main() {
 
   test('Connection errors are reported', () async {
     final connectionStates = <ConnectionState>[];
-    harness.connection.connectionError = 'Connection error';
-    harness.connection.onStateChanged = (connection) {
+    harness.connection!.connectionError = 'Connection error';
+    harness.connection!.onStateChanged = (connection) {
       final state = connection.state;
       connectionStates.add(state);
     };
@@ -347,7 +418,7 @@ void main() {
   test('Connections time out if idle', () async {
     final done = Completer();
     final connectionStates = <ConnectionState>[];
-    harness.connection.onStateChanged = (connection) {
+    harness.connection!.onStateChanged = (connection) {
       final state = connection.state;
       connectionStates.add(state);
       if (state == ConnectionState.idle) done.complete();
@@ -368,9 +439,9 @@ void main() {
   });
 
   test('Default reconnect backoff backs off', () {
-    Duration lastBackoff = defaultBackoffStrategy(null);
+    var lastBackoff = defaultBackoffStrategy(null);
     expect(lastBackoff, const Duration(seconds: 1));
-    for (int i = 0; i < 12; i++) {
+    for (var i = 0; i < 12; i++) {
       final minNext = lastBackoff * (1.6 - 0.2);
       final maxNext = lastBackoff * (1.6 + 0.2);
       lastBackoff = defaultBackoffStrategy(lastBackoff);
@@ -393,7 +464,66 @@ void main() {
         credentials: ChannelCredentials.insecure(authority: 'myauthority.com'));
     expect(Http2ClientConnection('localhost', 8080, channelOptions).authority,
         'myauthority.com');
-    expect(Http2ClientConnection('localhost', null, channelOptions).authority,
+    expect(Http2ClientConnection('localhost', 443, channelOptions).authority,
         'myauthority.com');
+  });
+
+  test(
+      'decodeStatusDetails should decode details into a List<GeneratedMessage> if base64 present',
+      () {
+    final decodedDetails = decodeStatusDetails(
+        'CAMSEGFtb3VudCB0b28gc21hbGwafgopdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUucnBjLkJhZFJlcXVlc3QSUQpPCgZhbW91bnQSRVRoZSByZXF1aXJlZCBjdXJyZW5jeSBjb252ZXJzaW9uIHdvdWxkIHJlc3VsdCBpbiBhIHplcm8gdmFsdWUgcGF5bWVudA');
+    expect(decodedDetails, isA<List<GeneratedMessage>>());
+    expect(decodedDetails.length, 1);
+  });
+
+  test(
+      'decodeStatusDetails should decode details into an empty list for an invalid base64 string',
+      () {
+    final decodedDetails = decodeStatusDetails('xxxxxxxxxxxxxxxxxxxxxx');
+    expect(decodedDetails, isA<List<GeneratedMessage>>());
+    expect(decodedDetails.length, 0);
+  });
+
+  test('parseGeneratedMessage should parse out a valid Any type', () {
+    final status = Status.fromBuffer(base64Url.decode(
+        'CAMSEGFtb3VudCB0b28gc21hbGwafgopdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUucnBjLkJhZFJlcXVlc3QSUQpPCgZhbW91bnQSRVRoZSByZXF1aXJlZCBjdXJyZW5jeSBjb252ZXJzaW9uIHdvdWxkIHJlc3VsdCBpbiBhIHplcm8gdmFsdWUgcGF5bWVudA=='));
+    expect(status.details, isNotEmpty);
+
+    final detailItem = status.details.first;
+    final parsedResult = parseErrorDetailsFromAny(detailItem);
+    expect(parsedResult, isA<BadRequest>());
+
+    final castedResult = parsedResult as BadRequest;
+    expect(castedResult.fieldViolations, isNotEmpty);
+    expect(castedResult.fieldViolations.first.field_1, 'amount');
+    expect(castedResult.fieldViolations.first.description,
+        'The required currency conversion would result in a zero value payment');
+  });
+
+  test('Call should throw details embedded in the headers', () async {
+    final code = StatusCode.invalidArgument;
+    final message = 'amount too small';
+    final details =
+        'CAMSEGFtb3VudCB0b28gc21hbGwafgopdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUucnBjLkJhZFJlcXVlc3QSUQpPCgZhbW91bnQSRVRoZSByZXF1aXJlZCBjdXJyZW5jeSBjb252ZXJzaW9uIHdvdWxkIHJlc3VsdCBpbiBhIHplcm8gdmFsdWUgcGF5bWVudA';
+
+    void handleRequest(_) {
+      harness.toClient.add(HeadersStreamMessage([
+        Header.ascii('grpc-status', code.toString()),
+        Header.ascii('grpc-message', message),
+        Header.ascii('grpc-status-details-bin', details),
+      ], endStream: true));
+      harness.toClient.close();
+    }
+
+    await harness.runFailureTest(
+      clientCall: harness.client.unary(dummyValue),
+      expectedException: GrpcError.custom(
+        code,
+        message,
+        decodeStatusDetails(details),
+      ),
+      serverHandlers: [handleRequest],
+    );
   });
 }
