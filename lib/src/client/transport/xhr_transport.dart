@@ -63,6 +63,7 @@ class XhrTransportStream implements GrpcTransportStream {
     };
     _outgoingMessages.stream.map(frame).listen((data) {
       _request.bodyBytes = data;
+
       _client.send(_request).then((response) {
         if (_incomingMessages.isClosed) {
           return;
@@ -71,7 +72,9 @@ class XhrTransportStream implements GrpcTransportStream {
           return;
         }
         response.stream.listen((data) {
-          _incomingProcessor.add(Uint8List.fromList(data).buffer);
+          if (!_incomingProcessor.isClosed) {
+            _incomingProcessor.add(Uint8List.fromList(data).buffer);
+          }
         }, onDone: _close);
       }).catchError(asyncOnError);
     }, cancelOnError: true, onError: asyncOnError);
@@ -158,7 +161,7 @@ class XhrClientConnection extends ClientConnection {
   @override
   GrpcTransportStream makeRequest(String path, Duration? timeout,
       Map<String, String> metadata, ErrorHandler onError,
-      {required CallOptions callOptions}) {
+      {CallOptions? callOptions}) {
     if (_getContentTypeHeader(metadata) == null) {
       metadata['Content-Type'] = 'application/grpc-web+proto';
       metadata['X-User-Agent'] = 'grpc-web-dart/0.1';
@@ -183,7 +186,7 @@ class XhrClientConnection extends ClientConnection {
 
   @override
   Future<void> terminate() async {
-    for (var request in List.of(_requests)) {
+    for (var request in _requests) {
       request.terminate();
     }
   }

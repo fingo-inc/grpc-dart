@@ -17,7 +17,6 @@ import 'dart:async';
 
 import '../shared/profiler.dart';
 import '../shared/status.dart';
-
 import 'call.dart';
 import 'connection.dart';
 import 'method.dart';

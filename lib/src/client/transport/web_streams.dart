@@ -110,7 +110,7 @@ class _GrpcWebConversionSink extends ChunkedConversionSink<ByteBuffer> {
         _out.add(GrpcData(_data!, isCompressed: false));
         break;
       case frameTypeCompressedData:
-        _out.add(GrpcData(_data, isCompressed: true));
+        _out.add(GrpcData(_data!, isCompressed: true));
         break;
       case frameTypeTrailers:
         final stringData = String.fromCharCodes(_data!);
